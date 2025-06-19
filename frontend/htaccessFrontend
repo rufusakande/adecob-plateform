@@ -1,0 +1,13 @@
+ <IfModule mod_rewrite.c>
+ RewriteEngine On
+ RewriteBase /
+  
+  # Si la requête commence par /api, traiter comme une requête API
+  RewriteCond %{REQUEST_URI} ^/api/ [NC]
+  RewriteRule ^api/(.*)$ https://acad-plateforme.yes.bj/api/$1 [P,L]
+  
+  # Pour toutes les autres routes non-existantes, renvoyer vers index.html
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.html [L]
+</IfModule>

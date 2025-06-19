@@ -1,0 +1,53 @@
+/* Layout.css */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  
+  /* Content container */
+  .content-container {
+    display: flex;
+    flex: 1;
+    position: relative;
+  }
+  
+  /* Content wrapper */
+  .content-wrapper {
+    flex: 1;
+    width: 100%;
+    transition: var(--transition);
+  }
+  
+  /* Sidebar overlay */
+  .sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 950;
+    transition: var(--transition);
+  }
+  
+  /* Responsive styles */
+  @media (min-width: 992px) {
+    .content-wrapper {
+      margin-left: 250px;
+    }
+    
+    .content-wrapper.sidebar-collapsed {
+      margin-left: 70px;
+    }
+  }
+  
+  @media (max-width: 991px) {
+    .content-wrapper {
+      margin-left: 0 !important;
+    }
+    
+    .content-wrapper.sidebar-open {
+      position: relative;
+    }
+  }
