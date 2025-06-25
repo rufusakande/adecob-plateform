@@ -1,4 +1,4 @@
-import { createContext, useState, useEffect } from "react";
+import { createContext, useState, useEffect, useCallback } from "react";
 import axios from "axios";
 
 export const AuthContext = createContext();
@@ -182,7 +182,67 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const updatePassword = useCallback(async (currentPassword, newPassword, confirmNewPassword) => {
+    try {
+      setError(null);
+      // No explicit setLoading(true) here to avoid interfering with global loading state for profile update,
+      // Profile component handles its own loading for password change.
+
+      const response = await axios.put('/auth/password', {
+        currentPassword,
+        newPassword,
+        confirmNewPassword
+      });
+
+      if (response.data.success) {
+        return { success: true, message: response.data.message };
+      } else {
+        throw new Error(response.data.message || 'Erreur lors du changement de mot de passe');
+      }
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || 'Erreur lors du changement de mot de passe';
+      throw new Error(errorMessage);
+    }
+  }, []); // Dependencies are empty because it doesn't rely on any external variables
   const clearError = () => setError(null);
+
+  const forgotPassword = async (email) => {
+    try {
+      setError(null);
+      // setLoading(true); // Optional: show loading for this specific action
+
+      const response = await axios.post('/auth/forgot-password', { email });
+
+      if (response.data.success) {
+        return { success: true, message: response.data.message };
+      } else {
+        // Although the backend sends success even on user not found for security,
+        // this check handles potential other backend errors.
+        throw new Error(response.data.message || 'Erreur lors de la demande de réinitialisation.');
+      }
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || error.response?.data?.errors?.[0]?.msg || 'Erreur lors de la demande de réinitialisation.';
+      setError(errorMessage);
+      throw new Error(errorMessage);
+    } finally {
+      // setLoading(false); // Optional: stop loading
+    }
+  };
+
+  const resetPassword = async (token, newPassword, confirmNewPassword) => {
+    try {
+      setError(null);
+      const response = await axios.post('/auth/reset-password', { token, newPassword, confirmNewPassword });
+
+      if (response.data.success) {
+        return { success: true, message: response.data.message };
+      } else {
+        throw new Error(response.data.message || 'Erreur lors de la réinitialisation du mot de passe.');
+      }
+    } catch (error) {
+      throw new Error(error.response?.data?.message || error.response?.data?.errors?.[0]?.msg || 'Erreur lors de la réinitialisation du mot de passe.');
+    }
+  };
 
   const value = {
     user,
@@ -192,6 +252,9 @@ export function AuthProvider({ children }) {
     register,
     logout,
     updateProfile,
+    updatePassword,
+    forgotPassword,
+    resetPassword,
     clearError,
     isAuthenticated: !!user,
     isAdmin: user?.role === 'administrateur'

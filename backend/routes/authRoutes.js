@@ -711,6 +711,206 @@ router.put("/profile",
   }
 );
 
+// 📌 Changement de mot de passe utilisateur
+router.put("/password",
+ authMiddleware,
+ activityLogMiddleware('CHANGEMENT_MOT_DE_PASSE', (req) => `Changement de mot de passe pour ${req.user.email}`),
+ [
+    body("currentPassword")
+ .notEmpty()
+ .withMessage("Le mot de passe actuel est requis"),
+
+    body("newPassword")
+ .isLength({ min: 8 })
+ .withMessage("Le nouveau mot de passe doit contenir au moins 8 caractères")
+ .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
+ .withMessage("Le nouveau mot de passe doit contenir au moins une minuscule, une majuscule, un chiffre et un caractère spécial"),
+
+    body("confirmNewPassword")
+ .notEmpty()
+ .withMessage("La confirmation du nouveau mot de passe est requise")
+ .custom((value, { req }) => value === req.body.newPassword)
+ .withMessage("Les nouveaux mots de passe ne correspondent pas")
+ ],
+ async (req, res) => {
+ try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+ return res.status(400).json({
+ success: false,
+ message: "Données invalides",
+ errors: errors.array()
+        });
+      }
+
+      const { currentPassword, newPassword } = req.body;
+      const userId = req.user.id;
+
+      User.findById(userId, async (err, results) => {
+        if (err || results.length === 0) {
+ return res.status(404).json({
+ success: false,
+ message: "Utilisateur introuvable"
+          });
+        }
+
+        const user = results[0];
+        const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.mot_de_passe);
+
+        if (!isCurrentPasswordValid) {
+ return res.status(400).json({
+ success: false,
+ message: "Le mot de passe actuel est incorrect"
+          });
+        }
+
+        const hashedNewPassword = await bcrypt.hash(newPassword, 12);
+
+        User.updatePassword(userId, hashedNewPassword, (err, result) => {
+          if (err) {
+ console.error("Erreur mise à jour mot de passe:", err);
+ return res.status(500).json({ success: false, message: "Erreur lors du changement de mot de passe" });
+          }
+ res.json({ success: true, message: "Mot de passe mis à jour avec succès ✅" });
+        });
+      });
+    } catch (error) {
+ console.error("Erreur changement mot de passe:", error);
+ res.status(500).json({ success: false, message: "Erreur serveur lors du changement de mot de passe" });
+    }
+  }
+);
+
+// 📌 Demande de réinitialisation de mot de passe
+router.post("/forgot-password",
+  rateLimitMiddleware(5, 60 * 60 * 1000), // 5 requests per hour for password reset requests
+  activityLogMiddleware('DEMANDE_REINITIALISATION_MOT_DE_PASSE', (req) => `Demande de réinitialisation de mot de passe pour ${req.body.email}`),
+  [
+    body("email")
+      .notEmpty()
+      .withMessage("L'adresse email est requise")
+      .isEmail()
+      .withMessage("Format d'email invalide")
+      .normalizeEmail()
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: "Données invalides",
+          errors: errors.array()
+        });
+      }
+
+      const { email } = req.body;
+
+      // Find user by email (even if inactive, for security reasons to prevent enumeration)
+      User.findByEmail(email.toLowerCase().trim(), async (err, results) => {
+        if (err) {
+          console.error("Erreur recherche utilisateur pour mot de passe oublié:", err);
+          // Still return success to prevent email enumeration
+          return res.json({ success: true, message: "Si l'email est dans notre système, un lien de réinitialisation a été envoyé." });
+        }
+
+        if (results.length === 0 || results[0].statut !== 'actif') {
+          // User not found or inactive, return success anyway
+          return res.json({ success: true, message: "Si l'email est dans notre système, un lien de réinitialisation a été envoyé." });
+        }
+
+        const user = results[0];
+
+        // Generate reset token (e.g., 32 bytes, convert to hex)
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        const tokenExpires = new Date(Date.now() + 60 * 60 * 1000); // Token valid for 1 hour
+
+        // Store the token in the database (Need to add this method to UserModel)
+        User.storePasswordResetToken(user.id, resetToken, tokenExpires, (storeErr) => {
+          if (storeErr) {
+            console.error("Erreur stockage token réinitialisation:", storeErr);
+          }
+          // Regardless of whether storing token succeeded or failed, respond with success
+          // Also, need to send an email here (placeholder)
+          // sendPasswordResetEmail(user.email, resetToken); // TODO: Implement email sending
+          res.json({ success: true, message: "Si l'email est dans notre système, un lien de réinitialisation a été envoyé." });
+        });
+      });
+    } catch (error) {
+      console.error("Erreur forgot-password:", error);
+      res.status(500).json({ success: false, message: "Erreur serveur lors de la demande de réinitialisation." });
+    }
+  }
+);
+
+// 📌 Réinitialisation de mot de passe via token
+router.post("/reset-password",
+  rateLimitMiddleware(10, 15 * 60 * 1000), // 10 requests per 15 minutes for password reset attempts
+ activityLogMiddleware('REINITIALISATION_MOT_DE_PASSE', (req) => `Réinitialisation de mot de passe via token`),
+ [
+    body("token")
+ .notEmpty()
+ .withMessage("Le token de réinitialisation est requis"),
+
+    body("newPassword")
+ .isLength({ min: 8 })
+ .withMessage("Le nouveau mot de passe doit contenir au moins 8 caractères")
+ .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
+ .withMessage("Le nouveau mot de passe doit contenir au moins une minuscule, une majuscule, un chiffre et un caractère spécial"),
+
+    body("confirmNewPassword")
+ .notEmpty()
+ .withMessage("La confirmation du nouveau mot de passe est requise")
+ .custom((value, { req }) => value === req.body.newPassword)
+ .withMessage("Les nouveaux mots de passe ne correspondent pas")
+ ],
+ async (req, res) => {
+ try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+ return res.status(400).json({
+ success: false,
+ message: "Données invalides",
+ errors: errors.array()
+        });
+      }
+
+      const { token, newPassword } = req.body;
+
+      User.findByPasswordResetToken(token, async (err, results) => {
+        if (err) {
+ console.error("Erreur recherche utilisateur par token:", err);
+ return res.status(500).json({ success: false, message: "Erreur serveur" });
+        }
+
+        if (results.length === 0) {
+ // Use a generic message for security (token not found or expired)
+ return res.status(400).json({ success: false, message: "Le token de réinitialisation est invalide ou a expiré." });
+        }
+
+        const user = results[0];
+
+        // Hash the new password
+        const hashedNewPassword = await bcrypt.hash(newPassword, 12);
+
+        // Update password and invalidate the token in a single transaction if possible, or sequentially
+ User.updatePassword(user.id, hashedNewPassword, (updateErr) => {
+          if (updateErr) {
+ console.error("Erreur mise à jour mot de passe avec token:", updateErr);
+ return res.status(500).json({ success: false, message: "Erreur lors de la réinitialisation du mot de passe." });
+          }
+ User.invalidatePasswordResetToken(user.id, (invalidateErr) => {
+ if (invalidateErr) console.error("Erreur invalidation token:", invalidateErr);
+ res.json({ success: true, message: "Votre mot de passe a été réinitialisé avec succès ✅." });
+            });
+        });
+      });
+    } catch (error) {
+ console.error("Erreur reset-password:", error);
+ res.status(500).json({ success: false, message: "Erreur serveur lors de la réinitialisation du mot de passe." });
+    }
+  }\n);
+
 // 📌 Nettoyage des sessions expirées (route utilitaire)
 router.post("/cleanup-sessions", 
   authMiddleware,

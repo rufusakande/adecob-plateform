@@ -2,7 +2,8 @@ const express = require("express");
 const db = require("../config/db");
 const {upload} = require("../middleware/uploadMiddleware");
 const importService = require("../services/importService");
-const dataService = require("../services/dataService");
+const { query, validationResult, param, body } = require('express-validator');
+const dataService = require("../services/dataService"); // Assuming this service exists and handles DB interaction
 const logService = require("../services/logService");
 const PDFDocument = require('pdfkit');
 
@@ -11,6 +12,8 @@ const router = express.Router();
 // 📌 Route pour importer un fichier Excel
 router.post("/import", upload.single("file"), async (req, res) => {
   try {
+    // No express-validator needed here for file upload, handled by multer
+
     if (!req.file) {
       return res.status(400).json({ message: "Aucun fichier envoyé." });
     }
@@ -47,6 +50,28 @@ router.post("/import", upload.single("file"), async (req, res) => {
 });
 
 // 📌 Route GET optimisée pour la pagination avec contrôle d'accès
+const safeColumns = [
+  'id', 'nom_enqueteur', 'numero_enquete', 'commune', 'village_quartier',
+  'hameau', 'secteur_domaine', 'type_infrastructure', 'nom_infrastructure',
+  'annee_realisation', 'bailleur', 'type_materiaux', 'etat_fonctionnement',
+  'niveau_degradation', 'mode_gestion', 'precise', 'defectuosites_relevees',
+  'mesures_proposees', 'observation_generale', 'rehabilitation', 'localisation',
+  'latitude', 'longitude', 'altitude', 'precision_gps', 'date_creation',
+  'created_at', 'updated_at', 'statut_traitement', 'date_traitement',
+  'traite_par_utilisateur_id', 'observations_internes'
+];
+
+router.get("/", [
+  query('page').optional().isInt({ gt: 0 }).toInt(),
+  query('limit').optional().isInt({ gt: 0 }).toInt(),
+  query('search').optional().trim().escape(),
+  query('sortBy').optional().isIn(safeColumns),
+  query('sortDirection').optional().isIn(['asc', 'desc']),
+  query('commune').optional().trim().escape(),
+  query('statut_traitement').optional().trim().escape(),
+  query('etat_fonctionnement').optional().trim().escape(),
+  query('type_infrastructure').optional().trim().escape(),
+], async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const options = {
@@ -61,6 +86,11 @@ router.get("/", async (req, res) => {
       type_infrastructure: req.query.type_infrastructure || ''
     };
 
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    // Use the validated and sanitized options
     const result = await dataService.getInfrastructures(options, req.user);
     res.json(result);
 
@@ -73,6 +103,9 @@ router.get("/", async (req, res) => {
 });
 
 // 📌 Route pour obtenir une infrastructure spécifique
+router.get("/:id", [
+  param('id').isInt({ gt: 0 }).withMessage('ID de l\'infrastructure doit être un entier positif'),
+], async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -90,8 +123,35 @@ router.get("/:id", async (req, res) => {
 });
 
 // 📌 Route pour mettre à jour une infrastructure
-router.put("/:id", async (req, res) => {
+router.put("/:id", [
+  param('id').isInt({ gt: 0 }).withMessage('ID de l\'infrastructure doit être un entier positif'),
+  body('commune').optional().trim().escape(),
+  body('village_quartier').optional().trim().escape(),
+  body('secteur_domaine').optional().trim().escape(),
+  body('type_infrastructure').optional().trim().escape(),
+  body('nom_infrastructure').optional().trim().escape(),
+  body('annee_realisation').optional().isInt({ gt: 1900, lte: new Date().getFullYear() }).withMessage('Année de réalisation doit être une année valide').toInt(),
+  body('bailleur').optional().trim().escape(),
+  body('type_materiaux').optional().trim().escape(),
+  body('etat_fonctionnement').optional().trim().escape(),
+  body('niveau_degradation').optional().trim().escape(),
+  body('mode_gestion').optional().trim().escape(),
+  body('precise').optional().trim().escape(),
+  body('defectuosites_relevees').optional().trim().escape(),
+  body('mesures_proposees').optional().trim().escape(),
+  body('observation_generale').optional().trim().escape(),
+  body('latitude').optional().isFloat().withMessage('Latitude doit être un nombre décimal').toFloat(),
+  body('longitude').optional().isFloat().withMessage('Longitude doit être un nombre décimal').toFloat(),
+  body('altitude').optional().isFloat().withMessage('Altitude doit être un nombre décimal').toFloat(),
+  body('precision_gps').optional().isFloat({ gt: 0 }).withMessage('Précision GPS doit être un nombre décimal positif').toFloat(),
+  body('observations_internes').optional().trim().escape(),
+], async (req, res) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
     const { id } = req.params;
     const updateData = req.body;
     

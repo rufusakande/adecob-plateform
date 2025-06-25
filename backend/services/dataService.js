@@ -2,43 +2,54 @@ const db = require("../config/db");
 
 class DataService {
 
+  // Méthode utilitaire pour exécuter les requêtes
+  static executeQuery(query, params = []) {
+    return new Promise((resolve, reject) => {
+      db.query(query, params, (error, results) => {
+        if (error) {
+          return reject(error);
+        }
+        resolve(results);
+      });
+    });
+  }
+
+  // Helper method to build location-based WHERE clause
+  static buildLocationWhereClause(user, tableAlias = 'i') {
+    let whereConditions = [];
+    let params = [];
+
+    if (user.role !== 'administrateur') {
+      if (user.commune_id && user.commune_nom) {
+        whereConditions.push(`LOWER(${tableAlias}.commune) = LOWER(?)`);
+        params.push(user.commune_nom);
+      } else {
+        // If no commune assigned, no data visible
+        whereConditions.push('1 = 0');
+      }
+    }
+
+    return { whereConditions, params };
+  }
+
   static async getInfrastructures(options, user) {
     const { page, limit, search, sortBy, sortDirection, commune, statut_traitement, etat_fonctionnement, type_infrastructure } = options;
     const offset = (page - 1) * limit;
 
     // Colonnes autorisées pour le tri (sécurité)
     const safeColumns = [
-      "id", "commune", "village_quartier", "type_infrastructure", 
+      "id", "commune", "village_quartier", "type_infrastructure",
       "nom_infrastructure", "etat_fonctionnement", "niveau_degradation",
       "annee_realisation", "bailleur", "statut_traitement", "date_creation"
     ];
     const safeSortBy = safeColumns.includes(sortBy) ? sortBy : 'id';
 
-    // Construction des conditions WHERE
-    let whereConditions = [];
-    let params = [];
+    // Build WHERE clause
+    const { whereConditions, params } = this.buildLocationWhereClause(user, 'i');
 
-    // Contrôle d'accès selon le rôle
-    if (user.role !== 'administrateur') {
-      // Les membres ne voient que les données de leur commune
-      if (user.commune_id) {
-        whereConditions.push('c.id = ?');
-        params.push(user.commune_id);
-      } else {
-        // Si pas de commune assignée, aucune donnée visible
-        whereConditions.push('1 = 0');
-      }
-    }
-
-    // Filtres
+    // Add filters
     if (search) {
-      whereConditions.push(`(
-        i.nom_infrastructure LIKE ? OR 
-        i.commune LIKE ? OR 
-        i.village_quartier LIKE ? OR 
-        i.type_infrastructure LIKE ? OR
-        i.bailleur LIKE ?
-      )`);
+      whereConditions.push(`(\n        i.nom_infrastructure LIKE ? OR \n        i.commune LIKE ? OR \n        i.village_quartier LIKE ? OR \n        i.type_infrastructure LIKE ? OR\n        i.bailleur LIKE ?\n      )`);
       const searchTerm = `%${search}%`;
       params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
     }
@@ -65,17 +76,17 @@ class DataService {
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
-    // Requête de comptage
+    // Count query
     const countQuery = `
-      SELECT COUNT(*) AS total 
+      SELECT COUNT(*) AS total
       FROM infrastructures i
       LEFT JOIN communes c ON LOWER(i.commune) = LOWER(c.nom)
       ${whereClause}
     `;
 
-    // Requête de données
+    // Data query
     const dataQuery = `
-      SELECT 
+      SELECT
         i.id,
         i.commune,
         i.village_quartier,
@@ -103,7 +114,6 @@ class DataService {
     `;
 
     try {
-      // Exécuter les requêtes
       const [countResult, dataResult] = await Promise.all([
         this.executeQuery(countQuery, params),
         this.executeQuery(dataQuery, [...params, limit, offset])
@@ -128,7 +138,7 @@ class DataService {
 
   static async getInfrastructureById(id, user) {
     const query = `
-      SELECT 
+      SELECT
         i.*,
         u.nom as createur_nom,
         u.prenom as createur_prenom,
@@ -142,25 +152,18 @@ class DataService {
 
     try {
       const result = await this.executeQuery(query, [id]);
-      
+
       if (result.length === 0) {
         return null;
       }
 
       const infrastructure = result[0];
 
-      // Contrôle d'accès
+      // Contrôle d\'accès
       if (user.role !== 'administrateur') {
-        // Vérifier si l'utilisateur a accès à cette commune
-        if (user.commune_id) {
-          const communeQuery = 'SELECT nom FROM communes WHERE id = ?';
-          const communeResult = await this.executeQuery(communeQuery, [user.commune_id]);
-          if (communeResult.length === 0 || 
-              communeResult[0].nom.toLowerCase() !== infrastructure.commune.toLowerCase()) {
-            throw new Error("Accès non autorisé à cette infrastructure");
-          }
-        } else {
-          throw new Error("Accès non autorisé");
+        // Vérifier si l\'utilisateur a accès à cette commune en utilisant user.commune_nom
+        if (!user.commune_nom || infrastructure.commune.toLowerCase() !== user.commune_nom.toLowerCase()) {
+             throw new Error("Accès non autorisé à cette infrastructure");
         }
       }
 
@@ -173,10 +176,11 @@ class DataService {
 
   static async updateInfrastructure(id, updateData, user) {
     try {
-      // Vérifier l'accès
+      // Vérifier l\'accès
       const infrastructure = await this.getInfrastructureById(id, user);
       if (!infrastructure) {
-        throw new Error("Infrastructure non trouvée");
+        // getInfrastructureById throws error if not found or not authorized
+        return null;
       }
 
       // Préparer les données de mise à jour
@@ -205,9 +209,10 @@ class DataService {
       values.push(id);
 
       const query = `UPDATE infrastructures SET ${setClause}, updated_at = NOW() WHERE id = ?`;
-      
+
       await this.executeQuery(query, values);
 
+      // Re-fetch the infrastructure to return the updated data with access check
       return await this.getInfrastructureById(id, user);
     } catch (error) {
       console.error("Erreur dans updateInfrastructure:", error);
@@ -217,15 +222,16 @@ class DataService {
 
   static async deleteInfrastructure(id, user) {
     try {
-      // Vérifier l'accès
+      // Vérifier l\'accès
       const infrastructure = await this.getInfrastructureById(id, user);
       if (!infrastructure) {
-        throw new Error("Infrastructure non trouvée");
+         // getInfrastructureById throws error if not found or not authorized
+        return null;
       }
 
       const query = 'DELETE FROM infrastructures WHERE id = ?';
       await this.executeQuery(query, [id]);
-      
+
       return { success: true };
     } catch (error) {
       console.error("Erreur dans deleteInfrastructure:", error);
@@ -233,7 +239,11 @@ class DataService {
     }
   }
 
-  static async deleteAllInfrastructures() {
+  static async deleteAllInfrastructures(user) {
+     // Add admin check
+    if (user.role !== 'administrateur') {
+      throw new Error("Accès non autorisé. Droits administrateur requis.");
+    }
     try {
       const countQuery = 'SELECT COUNT(*) as total FROM infrastructures';
       const countResult = await this.executeQuery(countQuery);
@@ -251,16 +261,17 @@ class DataService {
 
   static async processInfrastructure(id, observations, user) {
     try {
-      // Vérifier l'accès
+      // Vérifier l\'accès
       const infrastructure = await this.getInfrastructureById(id, user);
       if (!infrastructure) {
-        throw new Error("Infrastructure non trouvée");
+        // getInfrastructureById throws error if not found or not authorized
+        return null;
       }
 
       const query = `
-        UPDATE infrastructures 
-        SET statut_traitement = 'traite', 
-            date_traitement = NOW(), 
+        UPDATE infrastructures
+        SET statut_traitement = 'traite',
+            date_traitement = NOW(),
             traite_par_utilisateur_id = ?,
             observations_internes = ?
         WHERE id = ?
@@ -277,18 +288,9 @@ class DataService {
 
   static async getGeneralStats(user) {
     try {
-      let whereClause = '';
-      let params = [];
+      const { whereConditions, params } = this.buildLocationWhereClause(user);
 
-      // Contrôle d'accès selon le rôle
-      if (user.role !== 'administrateur' && user.commune_id) {
-        const communeQuery = 'SELECT nom FROM communes WHERE id = ?';
-        const communeResult = await this.executeQuery(communeQuery, [user.commune_id]);
-        if (communeResult.length > 0) {
-          whereClause = 'WHERE LOWER(commune) = LOWER(?)';
-          params.push(communeResult[0].nom);
-        }
-      }
+      const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
       const queries = {
         total: `SELECT COUNT(*) as count FROM infrastructures ${whereClause}`,
@@ -313,21 +315,12 @@ class DataService {
 
   static async getStatsByCommune(user) {
     try {
-      let whereClause = '';
-      let params = [];
+       const { whereConditions, params } = this.buildLocationWhereClause(user);
 
-      // Contrôle d'accès selon le rôle
-      if (user.role !== 'administrateur' && user.commune_id) {
-        const communeQuery = 'SELECT nom FROM communes WHERE id = ?';
-        const communeResult = await this.executeQuery(communeQuery, [user.commune_id]);
-        if (communeResult.length > 0) {
-          whereClause = 'WHERE LOWER(commune) = LOWER(?)';
-          params.push(communeResult[0].nom);
-        }
-      }
+       const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
       const query = `
-        SELECT 
+        SELECT
           commune,
           COUNT(*) as total,
           COUNT(CASE WHEN etat_fonctionnement = 'Bon' THEN 1 END) as bon_etat,
@@ -336,7 +329,7 @@ class DataService {
           COUNT(CASE WHEN etat_fonctionnement = 'Hors service' THEN 1 END) as hors_service,
           COUNT(CASE WHEN statut_traitement = 'nouveau' THEN 1 END) as non_traites,
           COUNT(CASE WHEN statut_traitement = 'traite' THEN 1 END) as traites
-        FROM infrastructures 
+        FROM infrastructures
         ${whereClause}
         GROUP BY commune
         ORDER BY commune
@@ -358,27 +351,20 @@ class DataService {
       if (user.role === 'administrateur') {
         // Les administrateurs voient toutes les communes
         query = `
-          SELECT DISTINCT commune 
-          FROM infrastructures 
+          SELECT DISTINCT commune
+          FROM infrastructures
           WHERE commune IS NOT NULL AND commune != ''
           ORDER BY commune
         `;
-      } else if (user.commune_id) {
+      } else if (user.commune_nom) {
         // Les membres voient seulement leur commune
-        const communeQuery = 'SELECT nom FROM communes WHERE id = ?';
-        const communeResult = await this.executeQuery(communeQuery, [user.commune_id]);
-        
-        if (communeResult.length > 0) {
-          query = `
-            SELECT DISTINCT commune 
-            FROM infrastructures 
+         query = `
+            SELECT DISTINCT commune
+            FROM infrastructures
             WHERE LOWER(commune) = LOWER(?)
             ORDER BY commune
           `;
-          params.push(communeResult[0].nom);
-        } else {
-          return [];
-        }
+          params.push(user.commune_nom);
       } else {
         return [];
       }
@@ -393,28 +379,19 @@ class DataService {
 
   static async getStatsByType(user) {
     try {
-      let whereClause = '';
-      let params = [];
+       const { whereConditions, params } = this.buildLocationWhereClause(user);
 
-      // Contrôle d'accès selon le rôle
-      if (user.role !== 'administrateur' && user.commune_id) {
-        const communeQuery = 'SELECT nom FROM communes WHERE id = ?';
-        const communeResult = await this.executeQuery(communeQuery, [user.commune_id]);
-        if (communeResult.length > 0) {
-          whereClause = 'WHERE LOWER(commune) = LOWER(?)';
-          params.push(communeResult[0].nom);
-        }
-      }
+       const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
       const query = `
-        SELECT 
+        SELECT
           type_infrastructure,
           COUNT(*) as total,
           COUNT(CASE WHEN etat_fonctionnement = 'Bon' THEN 1 END) as bon_etat,
           COUNT(CASE WHEN etat_fonctionnement = 'Moyen' THEN 1 END) as moyen_etat,
           COUNT(CASE WHEN etat_fonctionnement = 'Mauvais' THEN 1 END) as mauvais_etat,
           COUNT(CASE WHEN etat_fonctionnement = 'Hors service' THEN 1 END) as hors_service
-        FROM infrastructures 
+        FROM infrastructures
         ${whereClause}
         GROUP BY type_infrastructure
         ORDER BY total DESC
@@ -430,13 +407,9 @@ class DataService {
 
   static async createInfrastructure(infrastructureData, user) {
     try {
-      // Contrôle d'accès - vérifier si l'utilisateur peut créer dans cette commune
-      if (user.role !== 'administrateur' && user.commune_id) {
-        const communeQuery = 'SELECT nom FROM communes WHERE id = ?';
-        const communeResult = await this.executeQuery(communeQuery, [user.commune_id]);
-        
-        if (communeResult.length === 0 || 
-            communeResult[0].nom.toLowerCase() !== infrastructureData.commune.toLowerCase()) {
+      // Contrôle d\'accès - vérifier si l\'utilisateur peut créer dans cette commune
+      if (user.role !== 'administrateur') {
+        if (!user.commune_nom || infrastructureData.commune.toLowerCase() !== user.commune_nom.toLowerCase()) {
           throw new Error("Vous ne pouvez créer des infrastructures que dans votre commune");
         }
       }
@@ -462,15 +435,15 @@ class DataService {
       data.utilisateur_id = user.id;
       data.statut_traitement = 'nouveau';
 
-      // Construire la requête d'insertion
+      // Construire la requête d\'insertion
       const columns = Object.keys(data);
       const placeholders = columns.map(() => '?').join(',');
       const values = Object.values(data);
 
       const query = `INSERT INTO infrastructures (${columns.join(',')}) VALUES (${placeholders})`;
-      
+
       const result = await this.executeQuery(query, values);
-      
+
       return await this.getInfrastructureById(result.insertId, user);
     } catch (error) {
       console.error("Erreur dans createInfrastructure:", error);
@@ -480,20 +453,9 @@ class DataService {
 
   static async getInfrastructuresForExport(filters, user) {
     try {
-      let whereConditions = [];
-      let params = [];
+      const { whereConditions, params } = this.buildLocationWhereClause(user);
 
-      // Contrôle d'accès selon le rôle
-      if (user.role !== 'administrateur' && user.commune_id) {
-        const communeQuery = 'SELECT nom FROM communes WHERE id = ?';
-        const communeResult = await this.executeQuery(communeQuery, [user.commune_id]);
-        if (communeResult.length > 0) {
-          whereConditions.push('LOWER(commune) = LOWER(?)');
-          params.push(communeResult[0].nom);
-        }
-      }
-
-      // Appliquer les filtres
+      // Add filters
       if (filters.commune) {
         whereConditions.push('commune = ?');
         params.push(filters.commune);
@@ -517,7 +479,7 @@ class DataService {
       const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
       const query = `
-        SELECT 
+        SELECT
           i.*,
           u.nom as createur_nom,
           u.prenom as createur_prenom,
@@ -538,20 +500,6 @@ class DataService {
     }
   }
 
-  // Méthode utilitaire pour exécuter les requêtes
-  static executeQuery(query, params = []) {
-    return new Promise((resolve, reject) => {
-      db.query(query, params, (error, results) => {
-        if (error) {
-          return reject(error);
-        }
-        resolve(results);
-      });
-    });
-  }
-
-  // À ajouter dans votre DataService (dataService.js)
-
 // Méthode pour récupérer les infrastructures par IDs
 static async getInfrastructuresByIds(ids, user) {
   try {
@@ -561,32 +509,25 @@ static async getInfrastructuresByIds(ids, user) {
 
     // Convertir les IDs en entiers et les valider
     const validIds = ids.filter(id => !isNaN(parseInt(id))).map(id => parseInt(id));
-    
+
     if (validIds.length === 0) {
       return [];
     }
 
-    // Créer les placeholders pour la requête IN
+    // Create placeholders for the IN clause
     const placeholders = validIds.map(() => '?').join(',');
-    
-    let whereConditions = [`i.id IN (${placeholders})`];
-    let params = [...validIds];
 
-    // Contrôle d'accès selon le rôle
-    if (user.role !== 'administrateur') {
-      if (user.commune_id) {
-        whereConditions.push('c.id = ?');
-        params.push(user.commune_id);
-      } else {
-        // Si pas de commune assignée, aucune donnée visible
-        return [];
-      }
-    }
+    const { whereConditions, params } = this.buildLocationWhereClause(user, 'i');
+
+    // Add the IN clause to the conditions
+    whereConditions.push(`i.id IN (${placeholders})`);
+    params.push(...validIds);
+
 
     const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
 
     const query = `
-      SELECT 
+      SELECT
         i.id,
         i.commune,
         i.village_quartier,

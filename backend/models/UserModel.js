@@ -1,7 +1,7 @@
 const db = require("../config/db");
 
 class User {
-  // Méthode utilitaire pour exécuter les requêtes avec gestion d'erreur
+  // Méthode utilitaire pour exécuter les requêtes avec gestion d\'erreur
   static executeQuery(sql, params, callback) {
     // Vérifier si le pool est disponible
     if (!db || db.pool?.destroyed) {
@@ -11,9 +11,9 @@ class User {
     db.query(sql, params, (error, results) => {
       if (error) {
         console.error('Erreur SQL:', error);
-        // Si c'est une erreur de connexion, essayer de se reconnecter
-        if (error.code === 'PROTOCOL_CONNECTION_LOST' || 
-            error.code === 'ECONNRESET' || 
+        // Si c\'est une erreur de connexion, essayer de se reconnecter
+        if (error.code === 'PROTOCOL_CONNECTION_LOST' ||
+            error.code === 'ECONNRESET' ||
             error.fatal) {
           console.log('Tentative de reconnexion...');
           setTimeout(() => {
@@ -39,22 +39,23 @@ class User {
       commune_id
     } = userData;
 
+    // Add is_email_verified and email_verification_token to insertion
     const sql = `
-      INSERT INTO utilisateurs 
-      (nom, prenom, email, telephone, mot_de_passe, role, departement_id, commune_id) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO utilisateurs
+      (nom, prenom, email, telephone, mot_de_passe, role, departement_id, commune_id, is_email_verified, email_verification_token)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) -- is_email_verified defaults to false, token is NULL initially
     `;
-    
-    this.executeQuery(sql, [nom, prenom, email, telephone, mot_de_passe, role, departement_id, commune_id], callback);
+
+    this.executeQuery(sql, [nom, prenom, email, telephone, mot_de_passe, role, departement_id, commune_id, false], callback);
   }
 
   // Trouver un utilisateur par email
   static findByEmail(email, callback) {
     const sql = `
-      SELECT 
-        u.id, u.nom, u.prenom, u.email, u.telephone, u.mot_de_passe, 
+      SELECT
+        u.id, u.nom, u.prenom, u.email, u.telephone, u.mot_de_passe,
         u.role, u.statut, u.date_inscription, u.derniere_connexion,
-        u.departement_id, u.commune_id,
+        u.departement_id, u.commune_id, u.is_email_verified, u.email_verification_token,
         d.nom as departement_nom, d.code as departement_code,
         c.nom as commune_nom, c.code as commune_code
       FROM utilisateurs u
@@ -62,17 +63,17 @@ class User {
       LEFT JOIN communes c ON u.commune_id = c.id
       WHERE u.email = ? AND u.statut = 'actif'
     `;
-    
+
     this.executeQuery(sql, [email], callback);
   }
 
   // Trouver un utilisateur par ID
   static findById(id, callback) {
     const sql = `
-      SELECT 
-        u.id, u.nom, u.prenom, u.email, u.telephone, 
+      SELECT
+        u.id, u.nom, u.prenom, u.email, u.telephone,
         u.role, u.statut, u.date_inscription, u.derniere_connexion,
-        u.departement_id, u.commune_id,
+        u.departement_id, u.commune_id, u.is_email_verified,
         d.nom as departement_nom, d.code as departement_code,
         c.nom as commune_nom, c.code as commune_code
       FROM utilisateurs u
@@ -80,7 +81,7 @@ class User {
       LEFT JOIN communes c ON u.commune_id = c.id
       WHERE u.id = ? AND u.statut = 'actif'
     `;
-    
+
     this.executeQuery(sql, [id], callback);
   }
 
@@ -90,9 +91,65 @@ class User {
     this.executeQuery(sql, [id], callback);
   }
 
+  // Mettre à jour le mot de passe de l\'utilisateur
+  static updatePassword(userId, hashedPassword, callback) {
+    const sql = "UPDATE utilisateurs SET mot_de_passe = ? WHERE id = ?";
+    this.executeQuery(sql, [hashedPassword, userId], callback);
+  }
+
+  // Stocker le token de réinitialisation de mot de passe
+  static storePasswordResetToken(userId, token, expires, callback) {
+    const sql = "UPDATE utilisateurs SET reset_password_token = ?, reset_password_expires = ? WHERE id = ?";
+    this.executeQuery(sql, [token, expires, userId], callback);
+  }
+
+  // Trouver un utilisateur par token de réinitialisation de mot de passe valide
+ static findByPasswordResetToken(token, callback) {
+    const sql = `
+      SELECT
+        id, nom, prenom, email, role, statut
+      FROM utilisateurs
+      WHERE reset_password_token = ?
+      AND reset_password_expires > NOW()
+      AND statut = 'actif'
+    `;
+ this.executeQuery(sql, [token], callback);
+  }
+
+  // Invalider le token de réinitialisation de mot de passe après utilisation
+ static invalidatePasswordResetToken(userId, callback) {
+    const sql = "UPDATE utilisateurs SET reset_password_token = NULL, reset_password_expires = NULL WHERE id = ?";
+ this.executeQuery(sql, [userId], callback);
+  }
+
+  // Stocker le token de vérification d\'email
+  static storeEmailVerificationToken(userId, token, callback) {
+    const sql = "UPDATE utilisateurs SET email_verification_token = ? WHERE id = ?";
+    this.executeQuery(sql, [token, userId], callback);
+  }
+
+  // Trouver un utilisateur par token de vérification d\'email
+  static findByEmailVerificationToken(token, callback) {
+    const sql = `
+      SELECT
+        id, nom, prenom, email, role, statut, is_email_verified
+      FROM utilisateurs
+      WHERE email_verification_token = ?
+      AND statut = 'actif' -- Only verify active users
+    `;
+    this.executeQuery(sql, [token], callback);
+  }
+
+  // Marquer l\'email comme vérifié et invalider le token
+  static setEmailAsVerified(userId, callback) {
+    const sql = "UPDATE utilisateurs SET is_email_verified = TRUE, email_verification_token = NULL WHERE id = ?";
+    this.executeQuery(sql, [userId], callback);
+  }
+
+
   // Vérifier si un email existe déjà
   static checkEmailExists(email, callback) {
-    const sql = "SELECT id FROM utilisateurs WHERE email = ?";
+    const sql = "SELECT id FROM utilisateurs WHERE email = ? LIMIT 1"; // Added LIMIT 1 for efficiency
     this.executeQuery(sql, [email], callback);
   }
 
@@ -102,12 +159,12 @@ class User {
     this.executeQuery(sql, [], callback);
   }
 
-  // Obtenir les communes d'un département
+  // Obtenir les communes d\'un département
   static getCommunesByDepartement(departement_id, callback) {
     const sql = `
-      SELECT id, nom, code 
-      FROM communes 
-      WHERE departement_id = ? 
+      SELECT id, nom, code
+      FROM communes
+      WHERE departement_id = ?
       ORDER BY nom
     `;
     this.executeQuery(sql, [departement_id], callback);
@@ -128,8 +185,8 @@ class User {
   static createSession(sessionData, callback) {
     const { utilisateur_id, refresh_token, expire_le, adresse_ip, user_agent } = sessionData;
     const sql = `
-      INSERT INTO sessions_utilisateur 
-      (utilisateur_id, refresh_token, expire_le, adresse_ip, user_agent) 
+      INSERT INTO sessions_utilisateur
+      (utilisateur_id, refresh_token, expire_le, adresse_ip, user_agent)
       VALUES (?, ?, ?, ?, ?)
     `;
     this.executeQuery(sql, [utilisateur_id, refresh_token, expire_le, adresse_ip, user_agent], callback);
@@ -152,11 +209,11 @@ class User {
     this.executeQuery(sql, [refresh_token], callback);
   }
 
-  // Supprimer toutes les sessions expirées avec gestion d'erreur améliorée
+  // Supprimer toutes les sessions expirées avec gestion d\'erreur améliorée
   static cleanExpiredSessions(callback) {
     const sql = "DELETE FROM sessions_utilisateur WHERE expire_le < NOW()";
-    
-    // Vérifier si le pool est disponible avant d'exécuter
+
+    // Vérifier si le pool est disponible avant d\'exécuter
     if (!db || db.pool?.destroyed) {
       console.warn('Pool de base de données non disponible pour le nettoyage des sessions');
       if (callback) callback(new Error('Pool non disponible'));
@@ -173,7 +230,7 @@ class User {
     });
   }
 
-  // Enregistrer un log d'activité
+  // Enregistrer un log d\'activité
   static logActivity(logData, callback) {
     const {
       utilisateur_id,
@@ -188,9 +245,9 @@ class User {
     } = logData;
 
     const sql = `
-      INSERT INTO logs_activite 
-      (utilisateur_id, action, description, table_concernee, id_enregistrement, 
-       donnees_avant, donnees_apres, adresse_ip, user_agent) 
+      INSERT INTO logs_activite
+      (utilisateur_id, action, description, table_concernee, id_enregistrement,
+       donnees_avant, donnees_apres, adresse_ip, user_agent)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 

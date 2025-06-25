@@ -4,8 +4,8 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import ImportData from "./pages/ImportData";
-//import AdminPanel from "./pages/AdminPanel"; // Exemple de page admin
-//import Profile from "./pages/Profile"; // Exemple de page profil
+// import AdminPanel from "./pages/AdminPanel"; // Exemple de page admin
+import Profile from "./pages/Profile"; // Exemple de page profil
 import { ProtectedRoute, AdminRoute, PublicRoute } from "./context/ProtectedRoute";
 import Infrastructure from "./pages/Infrastructure";
 
