@@ -5,6 +5,7 @@ import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import ImportData from "./pages/ImportData";
 // import AdminPanel from "./pages/AdminPanel"; // Exemple de page admin
+import AddInfrastructure from "./pages/AddInfrastructure";
 import Profile from "./pages/Profile"; // Exemple de page profil
 import { ProtectedRoute, AdminRoute, PublicRoute } from "./context/ProtectedRoute";
 import Infrastructure from "./pages/Infrastructure";
@@ -63,6 +64,14 @@ function App() {
         element={
           <ProtectedRoute>
             <ImportData />
+          </ProtectedRoute>
+        }
+      />
+       <Route
+        path="/add-infrastructure"
+        element={
+          <ProtectedRoute>
+            <AddInfrastructure />
           </ProtectedRoute>
         } 
       />

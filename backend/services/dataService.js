@@ -20,15 +20,17 @@ class DataService {
     let params = [];
 
     if (user.role !== 'administrateur') {
-      if (user.commune_id && user.commune_nom) {
-        whereConditions.push(`LOWER(${tableAlias}.commune) = LOWER(?)`);
-        params.push(user.commune_nom);
+      // For non-admin users, show data they created OR data in their commune
+      // Need to check user.commune_nom exists before adding commune filter
+      if (user.commune_nom) {
+        whereConditions.push(`(${tableAlias}.utilisateur_id = ? OR LOWER(${tableAlias}.commune) = LOWER(?))`);
+        params.push(user.id, user.commune_nom);
       } else {
-        // If no commune assigned, no data visible
-        whereConditions.push('1 = 0');
+        // If user has no commune, still show data they created
+        whereConditions.push(`${tableAlias}.utilisateur_id = ?`);
+        params.push(user.id);
       }
     }
-
     return { whereConditions, params };
   }
 
@@ -414,13 +416,14 @@ class DataService {
         }
       }
 
-      // Préparer les données
+      // Préparer les données - Filtrer uniquement les champs autorisés pour l'insertion
       const allowedFields = [
         'commune', 'village_quartier', 'secteur_domaine', 'type_infrastructure',
         'nom_infrastructure', 'annee_realisation', 'bailleur', 'type_materiaux',
         'etat_fonctionnement', 'niveau_degradation', 'mode_gestion', 'precise',
         'defectuosites_relevees', 'mesures_proposees', 'observation_generale',
-        'latitude', 'longitude', 'altitude', 'precision_gps'
+        'latitude', 'longitude', 'altitude', 'precision_gps', 'date_enquete', // Ajout de date_enquete si pertinent
+        'numero_enquete', 'nom_enqueteur' // Ajout des champs d'enquêteur/numéro
       ];
 
       const data = {};
@@ -444,6 +447,7 @@ class DataService {
 
       const result = await this.executeQuery(query, values);
 
+      // Récupérer l'infrastructure nouvellement créée avec les informations jointes
       return await this.getInfrastructureById(result.insertId, user);
     } catch (error) {
       console.error("Erreur dans createInfrastructure:", error);

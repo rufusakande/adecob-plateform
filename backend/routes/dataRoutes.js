@@ -3,6 +3,8 @@ const db = require("../config/db");
 const {upload} = require("../middleware/uploadMiddleware");
 const importService = require("../services/importService");
 const { query, validationResult, param, body } = require('express-validator');
+const { authMiddleware } = require('../middleware/authMiddleware'); // Ensure adminMiddleware is imported if needed elsewhere
+const { fileValidationMiddleware } = require('../middleware/fileValidationMiddleware'); // Assuming fileValidationMiddleware is here
 const dataService = require("../services/dataService"); // Assuming this service exists and handles DB interaction
 const logService = require("../services/logService");
 const PDFDocument = require('pdfkit');
@@ -11,6 +13,12 @@ const router = express.Router();
 
 // 📌 Route pour importer un fichier Excel
 router.post("/import", upload.single("file"), async (req, res) => {
+router.post(
+  "/import",
+  authMiddleware, // Check if user is authenticated
+  upload.single("file"), // Handle file upload
+  fileValidationMiddleware, // Validate file type and size
+  async (req, res) => {
   try {
     // No express-validator needed here for file upload, handled by multer
 
